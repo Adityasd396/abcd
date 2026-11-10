@@ -1,0 +1,28 @@
+# Python and development environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+.env
+.env.*
+
+# Local sessions, cookies and scan output
+cookies.txt
+*cookies*.txt
+*cookies*.json
+*cookies*.tsv
+terabox-session.bin
+video-discovery.sqlite3*
+sources-*.json
+sources-*.txt
+*.log
+
+# Generated test screenshots and release files
+studio-desktop.png
+studio-mobile.png
+video-addons-desktop.png
+video-addons-mobile.png
+terabox-mobile.png
+*.zip

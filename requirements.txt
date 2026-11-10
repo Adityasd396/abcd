@@ -1,0 +1,14 @@
+Flask
+requests
+PySocks
+beautifulsoup4
+lxml
+playwright
+yt-dlp
+m3u8
+aiohttp
+curl-cffi
+cloudscraper
+httpx[http2]
+websocket-client
+orjson

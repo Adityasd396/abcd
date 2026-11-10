@@ -1,0 +1,2 @@
+# Optional accelerator only; existing requirements.txt is unchanged.
+selectolax>=0.4,<2

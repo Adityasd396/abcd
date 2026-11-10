@@ -1,0 +1,80 @@
+<style>
+.va-panel{margin:18px 0;padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--card)}.va-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:12px}.va-grid label{display:flex;gap:8px;align-items:center}.va-panel textarea{box-sizing:border-box;width:100%;min-height:95px;border:1px solid var(--line);border-radius:9px;padding:10px;font:13px monospace}.va-metrics{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}.va-metrics span{background:var(--bg);border-radius:8px;padding:9px}.va-records{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;max-height:420px;overflow:auto}.va-record{padding:14px;background:var(--bg);border-radius:10px;overflow-wrap:anywhere}.va-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.va-panel select{max-width:100%}.va-note{white-space:pre-wrap;overflow-wrap:anywhere}
+</style>
+<template id="vaTemplate"><section class="va-panel" aria-label="Optional video discovery add-ons">
+<h2>Video discovery add-ons</h2><p class="small">Optional extensions. Leave disabled to use the existing scanner.</p>
+<label><input type="checkbox" id="vaEnabled"> Enable video discovery add-ons</label>
+<details><summary style="margin:12px 0">Add-on settings, recipes &amp; local history</summary>
+<div class="va-grid">
+<label><input type="checkbox" id="vaAdaptive" checked> Adaptive browser use</label>
+<label><input type="checkbox" id="vaConcurrency" checked> Adaptive concurrency</label>
+<label><input type="checkbox" id="vaParser"> Optional Lexbor parser</label>
+<label><input type="checkbox" id="vaChannels" checked> Worker &amp; WebSocket discovery</label>
+<label><input type="checkbox" id="vaPersist"> Save local progress (7 days)</label>
+<label><input type="checkbox" id="vaIncremental"> Reuse unchanged page extraction</label>
+</div>
+<p class="small">Adaptive mode can finish observation early and may miss delayed media; disable it for full configured observation. Local history excludes cookies, headers, page bodies and URLs containing queries. Signed links remain in the current scan only. Unchanged-page reuse still fetches pages to check their contents.</p>
+<label for="vaRecipe">Video recipe (optional JSON of CSS selectors)</label>
+<textarea id="vaRecipe" spellcheck="false" placeholder='{"title":"h1","media":"video source","next":"a.next"}'>{}</textarea>
+<p class="small">Fields: title, description, duration, thumbnail, media, next. Media reads src, href or data-src. Pagination follows links; recipes do not click controls.</p>
+<div class="va-actions"><button type="button" id="vaSaveRecipe">Save recipe locally</button><button type="button" id="vaLoadRecipe">Load site recipe</button><button type="button" id="vaRefreshHistory">Refresh saved scans</button><button type="button" id="vaClear">Clear local history &amp; recipes</button></div>
+<label for="vaResume">Resume saved scan</label> <select id="vaResume"><option value="">Start fresh</option></select>
+<p class="small">Choose the same target URL to resume. Each resumed run gets a fresh time and page budget. Query-bearing targets cannot be resumed from disk.</p>
+</details>
+<div id="vaMetrics" class="va-metrics" aria-live="polite">Performance measurements appear during an add-on scan.</div>
+<p id="vaNote" class="small va-note" role="status"></p>
+<details><summary>Video records &amp; export</summary>
+<div class="va-grid" id="vaFields"></div>
+<div class="va-actions"><button type="button" id="vaCsv">Export video CSV</button><button type="button" id="vaJson">Export video JSON</button></div>
+<div class="va-records" id="vaRecords"></div></details>
+</section></template>
+<script>
+(()=>{
+const byId=id=>document.getElementById(id);
+const teraboxLink=document.createElement('a');teraboxLink.href='/terabox';teraboxLink.textContent='TeraBox resolver ↗';teraboxLink.style.display='block';teraboxLink.style.marginTop='14px';document.querySelector('.sidebar')?.append(teraboxLink);
+byId('copyAll').onclick=()=>{
+ const urls=[...new Set(records().map(r=>r.url).filter(u=>/^https?:\/\//.test(u||'')))];
+ if(!urls.length)return toast('No URLs to copy');
+ navigator.clipboard.writeText(urls.map(url=>url+',').join('\n'))
+ .then(()=>toast(urls.length+' URLs copied')).catch(()=>toast('Clipboard unavailable'));
+};
+byId('scanForm').closest('section').after(byId('vaTemplate').content.cloneNode(true));
+let addonScan=null,lastRecords='',history={runs:[],recipes:[]};
+const note=text=>byId('vaNote').textContent=text;
+const fields=['page','title','description','duration','thumbnail','url','kind','quality','source'];
+for(const name of fields){const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.checked=true;input.value=name;label.append(input,document.createTextNode(name));byId('vaFields').append(label)}
+function recipe(){const value=JSON.parse(byId('vaRecipe').value);if(!value||Array.isArray(value)||typeof value!=='object')throw Error('Recipe must be a JSON object');return value}
+async function refreshHistory(){history=await request('/addons/history');const select=byId('vaResume');select.replaceChildren(new Option('Start fresh',''));for(const run of history.runs){if(run.url)select.add(new Option(run.url+' · '+run.status+' · '+run.id,run.id))}}
+byId('vaRefreshHistory').onclick=()=>refreshHistory().catch(e=>note(e.message));
+byId('vaSaveRecipe').onclick=async()=>{try{await request('/addons/recipes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:byId('ui').value,recipe:recipe()})});note('Recipe saved locally for this site.')}catch(e){note(e.message)}};
+byId('vaLoadRecipe').onclick=async()=>{try{await refreshHistory();const u=new URL(byId('ui').value),port=Number(u.port||(u.protocol==='https:'?443:80));const found=history.recipes.find(r=>r.origin[0]===u.protocol.slice(0,-1)&&r.origin[1]===u.hostname&&r.origin[2]===port);if(!found)throw Error('No saved recipe for this site');byId('vaRecipe').value=JSON.stringify(found.recipe,null,2);note('Site recipe loaded.')}catch(e){note(e.message)}};
+byId('vaClear').onclick=async()=>{try{if(busy)throw Error('Stop the active scan before clearing history');await request('/addons/history',{method:'DELETE'});await refreshHistory();note('Local scan history, cache and recipes cleared.')}catch(e){note(e.message)}};
+byId('vaResume').onchange=()=>{const run=history.runs.find(r=>r.id===byId('vaResume').value);if(run){byId('ui').value=run.url;byId('vaPersist').checked=true;byId('vaEnabled').checked=true}};
+async function metrics(scan){
+ if(addonScan!==scan)return;
+ try{const data=await request('/addons/status/'+scan),m=data.metrics;
+ const values=[['First result',m.first_result_seconds==null?'waiting':m.first_result_seconds+'s'],['Static requests',m.requests||0],['Static body bytes',m.static_bytes||0],['Browser body bytes',m.browser_bytes||0],['Browser time',(m.browser_seconds||0)+'s'],['Parse time',(m.parse_seconds||0)+'s'],['Unique sources',m.unique_sources||0],['Reused pages',m.unchanged_pages||0],['Request slots',m.workers||0],['Skipped renders',m.browser_skipped||0],['Worker responses',m.worker_responses||0],['WS messages',m.websocket_messages||0],['Parser',m.parser||'']];
+ byId('vaMetrics').replaceChildren(...values.map(([key,value])=>{const span=document.createElement('span');span.textContent=key+': '+value;return span}));
+ const fingerprint=JSON.stringify(data.records);if(lastRecords!==fingerprint){lastRecords=fingerprint;byId('vaRecords').replaceChildren(...data.records.slice(0,200).map(r=>{const card=document.createElement('article'),title=document.createElement('strong'),body=document.createElement('p');card.className='va-record';title.textContent=r.title||'Video source';body.textContent=[r.duration,r.kind,r.quality,r.url].filter(Boolean).join(' · ');card.append(title,body);return card}))}
+ }catch(e){note(e.message)}
+ if(addonScan===scan&&busy)setTimeout(()=>metrics(scan),1000);
+ else if(addonScan===scan)note('Add-on scan finished. Metrics cover discovery traffic; manifest inspection and verification are excluded from byte counts.');
+}
+// A capture listener handles only explicitly enabled add-on scans. The original
+// submit handler and all its endpoints remain intact for default scans.
+byId('scanForm').addEventListener('submit',async event=>{
+ if(!byId('vaEnabled').checked){addonScan=null;return}
+ event.preventDefault();event.stopImmediatePropagation();if(busy)return;
+ try{
+ if(byId('sourceType').value!=='website')throw Error('Select Website for video add-ons, or disable add-ons to use API mode.');
+ const payload={url:byId('ui').value.trim(),source_type:'website',skip_validate:!byId('doValidate').checked,render_browser:byId('renderBrowser').checked,discover_sitemap:byId('discoverSitemap').checked,attempt_playback:byId('attemptPlayback').checked,deep_js:byId('deepJs').checked};
+ for(const[key,id]of Object.entries({depth:'depth',page_limit:'pageLimit',concurrency:'concurrency',time_limit_s:'timeBudget',browser_limit:'browserLimit',dwell_ms:'dwell'}))payload[key]=Number(byId(id).value);
+ payload.addons={adaptive:byId('vaAdaptive').checked,adaptive_concurrency:byId('vaConcurrency').checked,fast_parser:byId('vaParser').checked,browser_channels:byId('vaChannels').checked,persist:byId('vaPersist').checked,incremental:byId('vaIncremental').checked,resume_id:byId('vaResume').value,recipe:recipe()};
+ busy=true;byId('sb').disabled=true;byId('xb').disabled=true;status('STARTING',true);
+ const result=await request('/addons/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+ clearTimeout(pollTimer);clearInterval(timer);sid=result.scan_id;addonScan=sid;snapshot=null;lastRender='';lastRecords='';started=Date.now();elapsed();timer=setInterval(elapsed,1000);byId('xb').disabled=false;paint();note('Add-on scan active. Metrics cover discovery traffic; manifest inspection and verification are not included in byte counts.');poll();metrics(sid);
+ }catch(e){busy=false;byId('sb').disabled=false;byId('xb').disabled=true;status('ERROR');note(e.message)}
+},true);
+for(const[id,format]of [['vaCsv','csv'],['vaJson','json']])byId(id).onclick=()=>{if(!addonScan)return note('Run an add-on scan first');const selected=[...byId('vaFields').querySelectorAll('input:checked')].map(n=>n.value);if(!selected.length)return note('Select at least one export field');const link=document.createElement('a');link.href='/addons/export/'+addonScan+'?format='+format+'&fields='+encodeURIComponent(selected.join(','));link.click()};
+})();
+</script>
